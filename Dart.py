@@ -1,4 +1,5 @@
 import io
+import re
 import json
 import requests
 import zipfile
@@ -13,10 +14,12 @@ APIS = [
 ]
 
 class Dart:
-    def __init__(self, crtfc_key):
+    def __init__(self, crtfc_key, save_path, exclude_pattern=None):
         # self.key_path = "./API_KEY.txt"
         # self.crtfc_key = self.read_api_key()
         self.crtfc_key = crtfc_key
+        self.exclude_pattern = exclude_pattern
+        self.save_path = save_path
         
     def read_api_key(self):
         with open(self.key_path, "r") as f:
@@ -58,8 +61,8 @@ class Dart:
         tmp_date = date.today()
         tmp_year = tmp_date.year
 
-        results = []
-        for i in range(1, boundary + 1):
+        result_set = {}
+        for i in range(boundary, 0, -1):
             params={"crtfc_key" : self.crtfc_key,
                     "corp_code" : corp_code, 
                     "bsns_year" : str(tmp_year - i),
@@ -70,22 +73,17 @@ class Dart:
             json_dict = json.loads(res.text)
             dataset = json_dict["list"]
             
+            subjects = []
+            subject_values = []
             for data in dataset:
-                current_year = data["thstrm_nm"] ## 당기
-                account_name = data["account_nm"] ## 계정명
-                current_amount = data["thstrm_amount"] ## 당기금액
-                bsns_year = data["bsns_year"]
+                for target in target_list:
+                    account_name = data["account_nm"]
+                    if re.search(target, account_name) and not re.search(self.exclude_pattern, account_name):
+                        subjects.append(account_name)
+                        current_amount = format(int(data["thstrm_amount"][:-6]), ",")
+                        subject_values.append(current_amount)
 
-                if account_name in target_list:
-                    results.append({"기수" : current_year, "사업연도" : bsns_year, "계정과목" : account_name, "금액" : format(int(current_amount[:-6]), ",")})
-
-        df = pd.DataFrame(results)
-        df.to_csv("./results.csv", index=False, columns=["기수", "사업연도", "계정과목", "금액"], encoding="utf-8-sig")
-
-            
-# dart = Dart()
-# founded_data = dart.get_corp_info("삼성전자")
-# print(founded_data, "\n")
-
-# targets = ["매출액", "매출원가", "매출총이익", "판매비와관리비", "영업이익", "영업이익(손실)"]
-# dart.get_financial_data(founded_data["corp_code"], targets, 5)
+            result_set.update({str(tmp_year - i) : subject_values})
+        
+        df = pd.DataFrame(result_set, index=subjects)
+        df.to_csv(self.save_path, encoding="utf-8-sig")
