@@ -13,9 +13,10 @@ APIS = [
 ]
 
 class Dart:
-    def __init__(self):
-        self.key_path = "./API_KEY.txt"
-        self.crtfc_key = self.read_api_key()
+    def __init__(self, crtfc_key):
+        # self.key_path = "./API_KEY.txt"
+        # self.crtfc_key = self.read_api_key()
+        self.crtfc_key = crtfc_key
         
     def read_api_key(self):
         with open(self.key_path, "r") as f:
