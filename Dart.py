@@ -1,18 +1,23 @@
 import io
-import json
+import html
+import codecs
 import zipfile
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
+
+from lxml import etree
+from bs4 import BeautifulSoup
 
 
 class Dart:
     def __init__(self):
         self.API_KEY = self.get_key()
         self.targets = self.basic_processing()
+        self.total_fs = []
 
         self.URLS = {"고유번호" : "https://opendart.fss.or.kr/api/corpCode.xml",
-                     "단일회사 전체 재무제표" : "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.json",
+                     "단일회사 전체 재무제표" : "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.xml",
                      "공시서류원본" : "https://opendart.fss.or.kr/api/document.xml"}
         
         self.name_to_code = {"1분기보고서" : "11013",
@@ -22,8 +27,9 @@ class Dart:
         
         self.search_unique_number()
         self.get_financial_document()
+        self.get_subjects()
+           
 
-        
     def get_key(self):
         with open("./API_KEY.txt", "r") as f:
             api_key = f.read()
@@ -41,14 +47,19 @@ class Dart:
                 targets.append({"company_name" : row[0],
                                 "years" : row[1],
                                 "report_types" : row[2],
-                                "bs_types" :row[3]})
+                                "bs_types" :row[3],
+                                "subjects" : row[4]})
 
         for target in targets:
             for idx, (key, value) in enumerate(target.items()):
-                if idx > 0:
+                if idx > 0 and isinstance(value, str):
                     value = value.split(',')
                     target[key] = value
+                
+                elif idx > 0 and isinstance(value, int):
+                    target[key] = [str(value)]
         
+        print(targets)
         return targets
 
 
@@ -57,10 +68,26 @@ class Dart:
         response = requests.get(self.URLS[request_name], params=parameters)
 
         ## Open data
-        zfile = zipfile.ZipFile(io.BytesIO(response.content))
-        data = zfile.open(zfile.namelist()[0]) ## CORPCODE.xml type -> list
-        data = ET.fromstring(data.read().decode("utf-8"))
+        try:
+            data = zipfile.ZipFile(io.BytesIO(response.content))
+            data = data.open(data.namelist()[0])
+            data = ET.fromstring(data.read().decode("utf-8"))
 
+        except zipfile.BadZipFile:
+            data = ET.fromstring(response.text)
+
+        # except (UnicodeDecodeError, ET.ParseError):
+        except UnicodeDecodeError:
+            zf = zipfile.ZipFile(io.BytesIO(response.content))
+            info_list = zf.infolist()
+            fnames = sorted([info.filename for info in info_list])
+            xml_data = zf.read(fnames[0])
+            data = xml_data.decode("cp949")
+
+        except ET.ParseError:
+            data = zipfile.ZipFile(io.BytesIO(response.content))
+            data = data.open(data.namelist()[0]).read().decode("utf-8")
+    
         return data
 
 
@@ -81,21 +108,42 @@ class Dart:
                     target.update({"corp_name" : corp_name, 
                                    "corp_code" : corp_code,
                                    "stock_code" : stock_code, 
-                                   "latest modified date" : modify_date})        
-        print(self.targets)
+                                   "latest modified date" : modify_date})
         
-
+        
     def get_financial_document(self):
         for target in self.targets:
+            rcept_numbers = [] 
             for year in target["years"]:
                 for report in target["report_types"]:
                     for bs_type in target["bs_types"]:
                         parameters = {"crtfc_key" : self.API_KEY,
                                       "corp_code" : target["corp_code"],
                                       "bsns_year" : str(year),
-                                      "reprt_code" : self.name_to_code[report],
+                                      "reprt_code" : self.name_to_code[report.strip()],
                                       "fs_div" : bs_type.upper()}
                         
-                        ## TODO 이 부분 수정 필요. 접수번호 rcept_no 가져오고, 공시서류원본 가져오기.
-                        response_data = self.send_request("단일회사 전체 재무제표", parameters)
-                        print(response_data)
+                        print(target["corp_code"], year, self.name_to_code[report.strip()], bs_type.upper())
+                        data = self.send_request("단일회사 전체 재무제표", parameters)
+                        rcept_number = data[2].find("rcept_no").text
+                        rcept_numbers.append(rcept_number)
+                        
+                        parameters = {"crtfc_key" : self.API_KEY, "rcept_no" : rcept_number}         
+                        financial_statement = self.send_request("공시서류원본", parameters)               
+
+                        self.total_fs.append({"company" : target["company_name"],
+                                                "year" : year,
+                                                "report" : report,
+                                                "bs_type" : bs_type,
+                                                "subjects" : target["subjects"],
+                                                "content" : financial_statement})        
+
+                        
+    def get_subjects(self):
+        for fs in self.total_fs:
+            financial_statement = BeautifulSoup(fs["content"], features="xml")
+            company, year, report, bs_type = fs["company"], fs["year"], fs["report"], fs["bs_type"]
+            
+            with open(f"./{company}-{year}-{report}-{bs_type}.txt", "w") as f:
+                for line in financial_statement:
+                    f.write(line.text)
