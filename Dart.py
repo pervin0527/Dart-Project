@@ -1,4 +1,5 @@
 import io
+import re
 import zipfile
 import requests
 import pandas as pd
@@ -134,52 +135,83 @@ class Dart:
                                                 "subjects" : target["subjects"],
                                                 "content" : financial_statement})
 
-    def search_subject(self, tag_list, target):
-        for tag in tag_list:
-            if target in tag.text:
-                target_value = tag_list.index(tag) + 1
+    def search_subject(self, document, target):
+        p_list = []
+        total_tbody = document.find_all("tbody")
+        for tbody in total_tbody:
+            total_tr = tbody.find_all("tr")
+        
+            for tr in total_tr:
+                total_td = tr.find_all("td")
+
+                for td in total_td:
+                    total_p = td.find_all("p")
+
+                    for p in total_p:
+                        p_list.append(p)
+
+        for p in p_list:
+            if target in p.text:
+                target_value = p_list.index(p) + 1
                 break
         else:
             return False
         
-        return tag.text, tag_list[target_value].text
-    
-    def search_table(self, tag_list, target):
-        for tag in tag_list:
-            print(tag)
+        return p.text, p_list[target_value].text
 
-                        
+
+    def search_table(self, document, target):
+        total_table = document.select("table")
+
+        target_idx = False
+        for idx, table in enumerate(total_table):
+            tags = table.select("tbody tr td")
+            for tag in tags:
+                if target in tag.text:
+                    target_idx = idx
+                    break
+            
+            if target_idx != False:
+                break
+
+        target_table = total_table[idx+1]
+        target_tds = target_table.select("td")
+        
+        values = []
+        result = {}
+        for td in target_tds:
+            td_text = td.text
+            if (td_text.replace(',', '').isdecimal()) or ('△' in td_text or '%' in td_text or '▽' in td_text or '-' in td_text):
+                values.append(td_text)
+
+            elif td_text.startswith(" "):
+                values.append(td_text)
+
+            else:
+                title = td_text
+                values = []
+
+            result.update({title : values})
+
+        print(result)
+
+
     def make_final_result(self):
         for fs in self.total_fs:
             fs_soup = BeautifulSoup(fs["content"], features="html.parser")
             company, year, report, bs_type = fs["company"], fs["year"], fs["report"], fs["bs_type"]
             subjects = fs["subjects"]
             print(company, year, report, bs_type)
-            
-            p_list, td_list = [], []
-            total_tbody = fs_soup.find_all("tbody")
-            for tbody in total_tbody:
-                total_tr = tbody.find_all("tr")
-            
-                for tr in total_tr:
-                    total_td = tr.find_all("td")
-
-                    for td in total_td:
-                        td_list.append(td)
-                        total_p = td.find_all("p")
-
-                        for p in total_p:
-                            p_list.append(p)
 
             search_result = {}
             for subject in subjects:
-                result = self.search_subject(p_list, subject)
+                result = self.search_subject(fs_soup, subject)
 
                 if result:
                     search_result.update({result[0] : result[1]})
                 else:
-                    result = self.search_table(td_list, subject)
+                    result = self.search_table(fs_soup, subject)
                 
             self.final_result.append({"name" : f"{company}-{year}-{report}{(bs_type)}",
                                       "subjects" : search_result})
-        print(self.final_result)
+        # print(self.final_result)
