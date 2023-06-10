@@ -161,9 +161,9 @@ class Dart:
 
 
     def search_table(self, document, target):
+        target_idx = False
         total_table = document.select("table")
 
-        target_idx = False
         for idx, table in enumerate(total_table):
             tags = table.select("tbody tr td")
             for tag in tags:
@@ -174,27 +174,29 @@ class Dart:
             if target_idx != False:
                 break
 
-        target_table = total_table[idx+1]
-        target_tds = target_table.select("td")
+        if target_idx != False:
+            target_table = total_table[idx+1]
+            target_tds = target_table.select("td")
+            
+            values = []
+            result = {}
+            for td in target_tds:
+                td_text = td.text
+                if (td_text.replace(',', '').isdecimal()) or ('△' in td_text or '%' in td_text or '▽' in td_text or '-' in td_text):
+                    values.append(td_text)
+
+                elif td_text.startswith(" "):
+                    values.append(td_text)
+
+                else:
+                    title = td_text
+                    values = []
+
+                result.update({title : values})
+            return result
         
-        values = []
-        result = {}
-        for td in target_tds:
-            td_text = td.text
-            if (td_text.replace(',', '').isdecimal()) or ('△' in td_text or '%' in td_text or '▽' in td_text or '-' in td_text):
-                values.append(td_text)
-
-            elif td_text.startswith(" "):
-                values.append(td_text)
-
-            else:
-                title = td_text
-                values = []
-
-            result.update({title : values})
-
-        print(result)
-
+        return False
+    
 
     def make_final_result(self):
         for fs in self.total_fs:
@@ -211,7 +213,9 @@ class Dart:
                     search_result.update({result[0] : result[1]})
                 else:
                     result = self.search_table(fs_soup, subject)
+                    if result:
+                        search_result.update({subject : result})
                 
             self.final_result.append({"name" : f"{company}-{year}-{report}{(bs_type)}",
                                       "subjects" : search_result})
-        # print(self.final_result)
+        print(self.final_result)
