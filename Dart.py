@@ -200,7 +200,6 @@ class Dart:
                                       "report_name" :report,
                                       "bs type" : bs_type,
                                       "subjects" : search_result})
-        print(self.final_result)
 
 
     def write_final_result(self):
