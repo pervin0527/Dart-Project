@@ -1,5 +1,6 @@
 import io
 import re
+import pandas as pd
 import zipfile
 import requests
 import pandas as pd
@@ -22,11 +23,6 @@ class Dart:
                              "반기보고서" : "11012",
                              "3분기보고서" : "11014",
                              "사업보고서" : "11011"}
-        
-        self.search_unique_number()
-        self.get_financial_document()
-        self.make_final_result()
-           
 
     def get_key(self):
         with open("./API_KEY.txt", "r") as f:
@@ -135,7 +131,7 @@ class Dart:
                                                 "subjects" : target["subjects"],
                                                 "content" : financial_statement})
 
-    def search_subject(self, document, target):
+    def search1(self, document, target):
         p_list = []
         total_tbody = document.find_all("tbody")
         for tbody in total_tbody:
@@ -160,42 +156,26 @@ class Dart:
         return p.text, p_list[target_value].text
 
 
-    def search_table(self, document, target):
-        target_idx = False
-        total_table = document.select("table")
-
-        for idx, table in enumerate(total_table):
-            tags = table.select("tbody tr td")
-            for tag in tags:
-                if target in tag.text:
-                    target_idx = idx
-                    break
-            
-            if target_idx != False:
-                break
-
-        if target_idx != False:
-            target_table = total_table[idx+1]
-            target_tds = target_table.select("td")
-            
-            values = []
-            result = {}
-            for td in target_tds:
-                td_text = td.text
-                if (td_text.replace(',', '').isdecimal()) or ('△' in td_text or '%' in td_text or '▽' in td_text or '-' in td_text):
-                    values.append(td_text)
-
-                elif td_text.startswith(" "):
-                    values.append(td_text)
-
-                else:
-                    title = td_text
-                    values = []
-
-                result.update({title : values})
-            return result
+    def search2(self, document, target):
+        td_list = []
+        total_tbody = document.select("tbody")
+        for tbody in total_tbody:
+            total_tr = tbody.find_all("tr")
         
-        return False
+            for tr in total_tr:
+                total_td = tr.find_all("td")
+
+                for td in total_td:
+                    td_list.append(td)
+
+        for td in td_list:
+            if target in td.text:
+                target_value = td_list.index(td) + 1
+                break
+        else:
+            return False
+        
+        return td.text, td_list[target_value].text
     
 
     def make_final_result(self):
@@ -203,19 +183,39 @@ class Dart:
             fs_soup = BeautifulSoup(fs["content"], features="html.parser")
             company, year, report, bs_type = fs["company"], fs["year"], fs["report"], fs["bs_type"]
             subjects = fs["subjects"]
-            print(company, year, report, bs_type)
 
             search_result = {}
             for subject in subjects:
-                result = self.search_subject(fs_soup, subject)
+                result = self.search1(fs_soup, subject)
 
                 if result:
                     search_result.update({result[0] : result[1]})
                 else:
-                    result = self.search_table(fs_soup, subject)
+                    result = self.search2(fs_soup, subject)
                     if result:
-                        search_result.update({subject : result})
+                        search_result.update({result[0] : result[1]})
                 
-            self.final_result.append({"name" : f"{company}-{year}-{report}{(bs_type)}",
+            self.final_result.append({"company_name" : company,
+                                      "years" : year,
+                                      "report_name" :report,
+                                      "bs type" : bs_type,
                                       "subjects" : search_result})
         print(self.final_result)
+
+
+    def write_final_result(self):
+        company_data = {}
+        for entry in self.final_result:
+            company_name = entry['company_name']
+            if company_name in company_data:
+                company_data[company_name][entry['years']] = entry['subjects']
+            else:
+                company_data[company_name] = {entry['years']: entry['subjects']}
+
+        writer = pd.ExcelWriter('output_file.xlsx')
+        for company_name, years_data in company_data.items():
+            df = pd.DataFrame(years_data)
+            # df = df.transpose()
+            df.to_excel(writer, sheet_name=company_name, index_label='Years')
+
+        writer.close()
