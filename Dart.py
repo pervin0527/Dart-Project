@@ -1,20 +1,17 @@
 import io
-import html
-import codecs
 import zipfile
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
 
-from lxml import etree
 from bs4 import BeautifulSoup
-
 
 class Dart:
     def __init__(self):
         self.API_KEY = self.get_key()
         self.targets = self.basic_processing()
         self.total_fs = []
+        self.final_result = []
 
         self.URLS = {"고유번호" : "https://opendart.fss.or.kr/api/corpCode.xml",
                      "단일회사 전체 재무제표" : "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.xml",
@@ -27,7 +24,7 @@ class Dart:
         
         self.search_unique_number()
         self.get_financial_document()
-        self.get_subjects()
+        self.make_final_result()
            
 
     def get_key(self):
@@ -54,12 +51,12 @@ class Dart:
             for idx, (key, value) in enumerate(target.items()):
                 if idx > 0 and isinstance(value, str):
                     value = value.split(',')
+                    value = [s.strip() for s in value]
                     target[key] = value
                 
                 elif idx > 0 and isinstance(value, int):
                     target[key] = [str(value)]
         
-        print(targets)
         return targets
 
 
@@ -76,7 +73,6 @@ class Dart:
         except zipfile.BadZipFile:
             data = ET.fromstring(response.text)
 
-        # except (UnicodeDecodeError, ET.ParseError):
         except UnicodeDecodeError:
             zf = zipfile.ZipFile(io.BytesIO(response.content))
             info_list = zf.infolist()
@@ -123,7 +119,7 @@ class Dart:
                                       "reprt_code" : self.name_to_code[report.strip()],
                                       "fs_div" : bs_type.upper()}
                         
-                        print(target["corp_code"], year, self.name_to_code[report.strip()], bs_type.upper())
+                        # print(target["corp_code"], year, self.name_to_code[report.strip()], bs_type.upper())
                         data = self.send_request("단일회사 전체 재무제표", parameters)
                         rcept_number = data[2].find("rcept_no").text
                         rcept_numbers.append(rcept_number)
@@ -136,14 +132,54 @@ class Dart:
                                                 "report" : report,
                                                 "bs_type" : bs_type,
                                                 "subjects" : target["subjects"],
-                                                "content" : financial_statement})        
+                                                "content" : financial_statement})
+
+    def search_subject(self, tag_list, target):
+        for tag in tag_list:
+            if target in tag.text:
+                target_value = tag_list.index(tag) + 1
+                break
+        else:
+            return False
+        
+        return tag.text, tag_list[target_value].text
+    
+    def search_table(self, tag_list, target):
+        for tag in tag_list:
+            print(tag)
 
                         
-    def get_subjects(self):
+    def make_final_result(self):
         for fs in self.total_fs:
-            financial_statement = BeautifulSoup(fs["content"], features="xml")
+            fs_soup = BeautifulSoup(fs["content"], features="html.parser")
             company, year, report, bs_type = fs["company"], fs["year"], fs["report"], fs["bs_type"]
+            subjects = fs["subjects"]
+            print(company, year, report, bs_type)
             
-            with open(f"./{company}-{year}-{report}-{bs_type}.txt", "w") as f:
-                for line in financial_statement:
-                    f.write(line.text)
+            p_list, td_list = [], []
+            total_tbody = fs_soup.find_all("tbody")
+            for tbody in total_tbody:
+                total_tr = tbody.find_all("tr")
+            
+                for tr in total_tr:
+                    total_td = tr.find_all("td")
+
+                    for td in total_td:
+                        td_list.append(td)
+                        total_p = td.find_all("p")
+
+                        for p in total_p:
+                            p_list.append(p)
+
+            search_result = {}
+            for subject in subjects:
+                result = self.search_subject(p_list, subject)
+
+                if result:
+                    search_result.update({result[0] : result[1]})
+                else:
+                    result = self.search_table(td_list, subject)
+                
+            self.final_result.append({"name" : f"{company}-{year}-{report}{(bs_type)}",
+                                      "subjects" : search_result})
+        print(self.final_result)
