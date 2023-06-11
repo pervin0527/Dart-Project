@@ -1,11 +1,8 @@
 import io
-import re
-import pandas as pd
 import zipfile
 import requests
 import pandas as pd
 import xml.etree.ElementTree as ET
-
 from bs4 import BeautifulSoup
 
 class Dart:
@@ -32,7 +29,7 @@ class Dart:
 
 
     def basic_processing(self):
-        df = pd.read_csv("./company_list.csv")
+        df = pd.read_csv("./input.csv")
         rows_all_filled = list(df.notnull().all(axis=1))
 
         targets = []
@@ -211,7 +208,7 @@ class Dart:
             else:
                 company_data[company_name] = {entry['years']: entry['subjects']}
 
-        writer = pd.ExcelWriter('output_file.xlsx')
+        writer = pd.ExcelWriter('output.xlsx')
         for company_name, years_data in company_data.items():
             df = pd.DataFrame(years_data)
             # df = df.transpose()
