@@ -5,58 +5,39 @@ import pandas as pd
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
+URLS = ["https://opendart.fss.or.kr/api/corpCode.xml",
+        "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.xml",
+        "https://opendart.fss.or.kr/api/document.xml"]
+
+REPORT_TYPES = {"1분기보고서" : "11013",
+                "반기보고서" : "11012",
+                "3분기보고서" : "11014",
+                "사업보고서" : "11011"}
+
+OUTPUT_DIR = "./output.xlsx"
+
+
 class Dart:
-    def __init__(self):
-        self.API_KEY = self.get_key()
-        self.targets = self.basic_processing()
-        self.total_fs = []
-        self.final_result = []
-
-        self.URLS = {"고유번호" : "https://opendart.fss.or.kr/api/corpCode.xml",
-                     "단일회사 전체 재무제표" : "https://opendart.fss.or.kr/api/fnlttSinglAcntAll.xml",
-                     "공시서류원본" : "https://opendart.fss.or.kr/api/document.xml"}
+    def __init__(self, api_key, targets):
+        self.api_key = api_key
+        self.targets = targets
+        self.start_crawling()
         
-        self.name_to_code = {"1분기보고서" : "11013",
-                             "반기보고서" : "11012",
-                             "3분기보고서" : "11014",
-                             "사업보고서" : "11011"}
+    def start_crawling(self):
+        print("크롤링을 시작합니다. \n")
+        self.search_unique_number()
+        self.search_financial_statements()
+        self.search_comment_subjects()
+        self.record()
 
-    def get_key(self):
-        with open("./API_KEY.txt", "r") as f:
-            api_key = f.read()
+    def show_targets(self):
+        for target in self.targets:
+            print(target)
+        print()
 
-        return api_key
-
-
-    def basic_processing(self):
-        df = pd.read_csv("./input.csv")
-        rows_all_filled = list(df.notnull().all(axis=1))
-
-        targets = []
-        for idx, row in df.iterrows():
-            if rows_all_filled[idx] != False:
-                targets.append({"company_name" : row[0],
-                                "years" : row[1],
-                                "report_types" : row[2],
-                                "bs_types" :row[3],
-                                "subjects" : row[4]})
-
-        for target in targets:
-            for idx, (key, value) in enumerate(target.items()):
-                if idx > 0 and isinstance(value, str):
-                    value = value.split(',')
-                    value = [s.strip() for s in value]
-                    target[key] = value
-                
-                elif idx > 0 and isinstance(value, int):
-                    target[key] = [str(value)]
-        
-        return targets
-
-
-    def send_request(self, request_name, parameters):
+    def send_request(self, url, parameters):
         ## Send_request
-        response = requests.get(self.URLS[request_name], params=parameters)
+        response = requests.get(url, params=parameters)
 
         ## Open data
         try:
@@ -77,141 +58,174 @@ class Dart:
         except ET.ParseError:
             data = zipfile.ZipFile(io.BytesIO(response.content))
             data = data.open(data.namelist()[0]).read().decode("utf-8")
-    
+
         return data
 
 
     def search_unique_number(self):
-        parameters = {"crtfc_key" : self.API_KEY}
-        response_data = self.send_request("고유번호", parameters)
+        print("========== STEP 1 : Find corp_code ==========")
+        parameters = {"crtfc_key" : self.api_key}
+        response_data = self.send_request(URLS[0], parameters)
 
         for target in self.targets:
             for data in response_data:
                 corp_name = data.find("corp_name").text.strip()
-                
                 target_name = target["company_name"]
+                
                 if corp_name == target_name:
                     corp_code = data.find("corp_code").text.strip()
-                    stock_code = data.find("stock_code").text.strip()
-                    modify_date = data.find("modify_date").text.strip()
-                    
-                    target.update({"corp_name" : corp_name, 
-                                   "corp_code" : corp_code,
-                                   "stock_code" : stock_code, 
-                                   "latest modified date" : modify_date})
+                    target.update({"corp_code" : corp_code})
+
+                    print(f"{target_name} found.")
+                    break
         
-        
-    def get_financial_document(self):
-        for target in self.targets:
-            rcept_numbers = [] 
-            for year in target["years"]:
-                for report in target["report_types"]:
-                    for bs_type in target["bs_types"]:
-                        parameters = {"crtfc_key" : self.API_KEY,
-                                      "corp_code" : target["corp_code"],
-                                      "bsns_year" : str(year),
-                                      "reprt_code" : self.name_to_code[report.strip()],
-                                      "fs_div" : bs_type.upper()}
-                        
-                        # print(target["corp_code"], year, self.name_to_code[report.strip()], bs_type.upper())
-                        data = self.send_request("단일회사 전체 재무제표", parameters)
-                        rcept_number = data[2].find("rcept_no").text
-                        rcept_numbers.append(rcept_number)
-                        
-                        parameters = {"crtfc_key" : self.API_KEY, "rcept_no" : rcept_number}         
-                        financial_statement = self.send_request("공시서류원본", parameters)               
-
-                        self.total_fs.append({"company" : target["company_name"],
-                                                "year" : year,
-                                                "report" : report,
-                                                "bs_type" : bs_type,
-                                                "subjects" : target["subjects"],
-                                                "content" : financial_statement})
-
-    def search1(self, document, target):
-        p_list = []
-        total_tbody = document.find_all("tbody")
-        for tbody in total_tbody:
-            total_tr = tbody.find_all("tr")
-        
-            for tr in total_tr:
-                total_td = tr.find_all("td")
-
-                for td in total_td:
-                    total_p = td.find_all("p")
-
-                    for p in total_p:
-                        p_list.append(p)
-
-        for p in p_list:
-            if target in p.text:
-                target_value = p_list.index(p) + 1
-                break
-        else:
-            return False
-        
-        return p.text, p_list[target_value].text
-
-
-    def search2(self, document, target):
-        td_list = []
-        total_tbody = document.select("tbody")
-        for tbody in total_tbody:
-            total_tr = tbody.find_all("tr")
-        
-            for tr in total_tr:
-                total_td = tr.find_all("td")
-
-                for td in total_td:
-                    td_list.append(td)
-
-        for td in td_list:
-            if target in td.text:
-                target_value = td_list.index(td) + 1
-                break
-        else:
-            return False
-        
-        return td.text, td_list[target_value].text
-    
-
-    def make_final_result(self):
-        for fs in self.total_fs:
-            fs_soup = BeautifulSoup(fs["content"], features="html.parser")
-            company, year, report, bs_type = fs["company"], fs["year"], fs["report"], fs["bs_type"]
-            subjects = fs["subjects"]
-
-            search_result = {}
-            for subject in subjects:
-                result = self.search1(fs_soup, subject)
-
-                if result:
-                    search_result.update({result[0] : result[1]})
-                else:
-                    result = self.search2(fs_soup, subject)
-                    if result:
-                        search_result.update({result[0] : result[1]})
-                
-            self.final_result.append({"company_name" : company,
-                                      "years" : year,
-                                      "report_name" :report,
-                                      "bs type" : bs_type,
-                                      "subjects" : search_result})
-
-
-    def write_final_result(self):
-        company_data = {}
-        for entry in self.final_result:
-            company_name = entry['company_name']
-            if company_name in company_data:
-                company_data[company_name][entry['years']] = entry['subjects']
             else:
-                company_data[company_name] = {entry['years']: entry['subjects']}
+                print(f"{target_name} not foud.")
+        # self.show_targets()
 
-        writer = pd.ExcelWriter('output.xlsx')
-        for company_name, years_data in company_data.items():
+    def get_fs_subjects(self, fs_document, name, subjects):
+        results = {}
+        if subjects != None:
+            for subject in subjects:
+                for pages in fs_document.findall("list"):
+                    is_founded = False
+                    for idx, data in enumerate(pages):
+                        try:
+                            if subject in data.text:
+                                is_founded = True
+                                key = data.text
+                                value = pages[idx + 3].text
+
+                                if len(value) > 12 and value[-6:] == '000000':
+                                    value = value[:-6]
+                                results.update({key : format(int(value), ",")})
+                                break
+                        except:
+                            pass
+                        
+                    if is_founded:
+                        print(f"{name} - {subject} found.")
+                        break
+                else:
+                    print(f"{name} - {subject} not found.")
+            return results
+        else:
+            return None
+
+    def search_financial_statements(self):
+        print("========== STEP 2 : Find report_code & financial statement subject. ==========")
+        for target in self.targets:
+            rcept_numbers = []
+            name = target["company_name"]
+            corp_code = target["corp_code"]
+            years = target["years"]
+            reports = target["report_types"]
+            bs_types = target["bs_types"]
+            fs_subjects = target["fs_subjects"]
+
+            result = []
+            for year in years:
+                for report in reports:
+                    for bs_type in bs_types:
+                        parameters = {"crtfc_key" : self.api_key,
+                                      "corp_code" : corp_code,
+                                      "bsns_year" : year,
+                                      "fs_div" : bs_type.upper(),
+                                      "reprt_code" : REPORT_TYPES[report]}
+                        
+                        fs = self.send_request(URLS[1], parameters)
+                        subject_values = self.get_fs_subjects(fs, name, fs_subjects)
+                        result.append(subject_values)
+
+                        rcept_number = fs[2].find("rcept_no").text
+                        rcept_numbers.append(rcept_number)
+
+            target.update({"report_numbers" : rcept_numbers, "fs_subjects" : result})
+        
+        # self.show_targets()
+
+
+    def get_comment_subjects(self, fs, name, subjects):
+        results = {}
+        td_list = []
+        if subjects != None:
+            total_td = fs.select("tbody tr td")
+            for idx, td in enumerate(total_td):
+                td_list.append(td)
+
+            for subject in subjects:
+                is_founded = False
+                for idx, td in enumerate(td_list):
+                    if subject in td.text:
+                        key = td.text
+                        value = td_list[idx + 1].text
+                        is_founded = True
+
+                        results.update({key : value})
+                        break
+
+                if is_founded:
+                    print(f"{name} - {subject} found.")
+                    break
+            
+            else:
+                print(f"{name} - {subject} not found.")
+            return results
+        else:
+            return None
+                
+
+    def search_comment_subjects(self):
+        print("========== STEP 3 : find financial statements comment subjets ==========")
+        for target in self.targets:
+            name = target["company_name"]
+            subjects = target["comment_subjects"]
+
+            result = []
+            for rcept_no in target["report_numbers"]:
+                parameters = {"crtfc_key" : self.api_key, "rcept_no" : rcept_no}
+                data = self.send_request(URLS[2], parameters)
+                fs = BeautifulSoup(data, features="html.parser")
+                subject_values = self.get_comment_subjects(fs, name, subjects)
+                if subject_values != None:
+                    result.append(subject_values)
+            target.update({"comment_subjects" : result})
+        
+        # self.show_targets()
+
+    def valid_subjects(self, years, subjects):
+        data = {}
+        if len(subjects) > 0:
+            for idx, year in enumerate(years):
+                data.update({year : subjects[idx]})
+
+            return data
+        return
+
+    def record(self):
+        print("========== STEP 4 : Write crawling result. ==========")
+        writer = pd.ExcelWriter(OUTPUT_DIR)
+
+        dataset = {}
+        for entry in self.targets:
+            company_name = entry['company_name']
+            years = entry['years']
+            
+            fs_subjects = self.valid_subjects(years, entry['fs_subjects'])
+            comment_subjects = self.valid_subjects(years, entry["comment_subjects"])
+
+            total_subjects = {}
+            try:
+                for year in comment_subjects:
+                    total_subjects[year] = {**fs_subjects[year], **comment_subjects[year]}
+            except:
+                total_subjects = fs_subjects
+
+            dataset[company_name] = total_subjects
+
+        for company_name, years_data in dataset.items():
             df = pd.DataFrame(years_data)
             # df = df.transpose()
-            df.to_excel(writer, sheet_name=company_name, index_label='Years')
+            df.to_excel(writer, sheet_name=company_name)
 
         writer.close()
